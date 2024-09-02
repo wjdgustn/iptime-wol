@@ -24,6 +24,7 @@ export default {
         const username = env.IPTIME_USER;
         const passwd = env.IPTIME_PW;
         const useLogin = env.USE_LOGIN === 'true';
+        const isNewFirmware = env.IS_NEW_FIRMWARE === 'true';
 
         const isRoot = !pathParams[0];
         let authorized = (request.method === 'GET' && query.key === apiKey)
@@ -103,14 +104,24 @@ export default {
 
                     console.log(session);
 
-                    const { data: result } = await api.get('/sess-bin/wol_apply.cgi', {
-                        params: {
-                            act: 'wakeup',
-                            mac: pathParams[2]
-                        }
-                    });
+                    if(isNewFirmware) {
+                        const { data: result } = await api.post('/cgi/service.cgi', {
+                            body: {
+                                method: 'wol/signal',
+                                params: [pathParams[2]]
+                            }
+                        });
+                    }
+                    else {
+                        const { data: result } = await api.get('/sess-bin/wol_apply.cgi', {
+                            params: {
+                                act: 'wakeup',
+                                mac: pathParams[2]
+                            }
+                        });
 
-                    return new Response(result);
+                        return new Response(result);
+                    }
                 }
                 case 'devices': {
                     const devices = await getDevices();
