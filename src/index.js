@@ -24,7 +24,6 @@ export default {
         const username = env.IPTIME_USER;
         const passwd = env.IPTIME_PW;
         const useLogin = env.USE_LOGIN === 'true';
-        const isNewFirmware = env.IS_NEW_FIRMWARE === 'true';
 
         const isRoot = !pathParams[0];
         let authorized = (request.method === 'GET' && query.key === apiKey)
@@ -44,17 +43,43 @@ export default {
             adapter: axiosFetchAdapter
         });
 
-        const { data: session } = await api.post('/sess-bin/login_handler.cgi', new URLSearchParams({
-            username,
-            passwd,
-            act: 'session_id',
-            captcha_on: 0
-        }).toString(), {
-            headers: {
-                Referer: `${host}/sess-bin/login_handler.cgi`,
-                'Content-Type': 'application/x-www-form-urlencoded'
-            }
-        });
+        const { data: version } = await api.get('/version');
+        const versionNumbers = version.toString().split('.').map(a => parseInt(a));
+        const isNewFirmware = versionNumbers[0] >= 15;
+
+        console.log(`version: ${version}, isNewFirmware: ${isNewFirmware}`);
+
+        let session;
+        if(isNewFirmware) {
+            const { headers } = await api.post('/cgi/service.cgi', {
+                method: 'session/login',
+                params: {
+                    id: username,
+                    pw: passwd
+                }
+            }, {
+                headers: {
+                    Referer: host
+                }
+            });
+
+            session = headers.get('set-cookie').split(';')[0].split('=')[1];
+        }
+        else {
+            const { data } = await api.post('/sess-bin/login_handler.cgi', new URLSearchParams({
+                username,
+                passwd,
+                act: 'session_id',
+                captcha_on: 0
+            }).toString(), {
+                headers: {
+                    Referer: `${host}/sess-bin/login_handler.cgi`,
+                    'Content-Type': 'application/x-www-form-urlencoded'
+                }
+            });
+
+            session = data;
+        }
 
         api = axios.create({
             baseURL: host,
@@ -69,16 +94,28 @@ export default {
         const getDevices = async () => {
             if(_devicesCache) return _devicesCache;
 
-            const { data: result } = await api.get('/sess-bin/info.cgi', {
-                params: {
-                    act: 'wol_list'
-                }
-            });
+            if(isNewFirmware) {
+                const { data: { result } } = await api.post('/cgi/service.cgi', {
+                    method: 'wol/show'
+                });
 
-            return _devicesCache = result.trim().split('\n').map(a => a.split(';')).map(a => ({
-                name: a[1],
-                mac: a[0].replaceAll('-', ':')
-            }));
+                return _devicesCache = result.map(a => ({
+                    name: a.pcname,
+                    mac: a.mac.replaceAll(':', '').match(/.{1,2}/g).join(':')
+                }));
+            }
+            else {
+                const { data: result } = await api.get('/sess-bin/info.cgi', {
+                    params: {
+                        act: 'wol_list'
+                    }
+                });
+
+                return _devicesCache = result.trim().split('\n').map(a => a.split(';')).map(a => ({
+                    name: a[1],
+                    mac: a[0].replaceAll('-', ':')
+                }));
+            }
         }
 
         switch(pathParams[0]) {
@@ -102,15 +139,13 @@ export default {
                 case 'wol': {
                     if(pathParams.length !== 3) return new Response('Bad Request', { status: 400 });
 
-                    console.log(session);
-
                     if(isNewFirmware) {
                         const { data: result } = await api.post('/cgi/service.cgi', {
-                            body: {
-                                method: 'wol/signal',
-                                params: [pathParams[2]]
-                            }
+                            method: 'wol/signal',
+                            params: [pathParams[2]]
                         });
+
+                        return new Response(JSON.stringify(result));
                     }
                     else {
                         const { data: result } = await api.get('/sess-bin/wol_apply.cgi', {
